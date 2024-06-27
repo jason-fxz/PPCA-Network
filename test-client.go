@@ -10,7 +10,7 @@ import (
 
 func main() {
     // 创建一个 SOCKS5 代理拨号器
-    dialer, err := proxy.SOCKS5("tcp", "127.0.0.1:1080", nil, proxy.Direct)
+    dialer, err := proxy.SOCKS5("tcp", "127.0.0.1:8081", nil, proxy.Direct)
     if err != nil {
         log.Fatalf("Error creating SOCKS5 dialer: %v", err)
     }
@@ -20,7 +20,7 @@ func main() {
     client := &http.Client{Transport: transport}
 
     // 通过 SOCKS5 代理发送 HTTP 请求
-    resp, err := client.Get("http://example.com")
+    resp, err := client.Get("http://example.com/3")
     if err != nil {
         log.Fatalf("Error making HTTP request: %v", err)
     }

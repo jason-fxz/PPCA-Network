@@ -1,0 +1,27 @@
+[Autoproxy]
+! 该文件为 Autoproxy 规则文件示例
+! 行首以感叹号开头的行是注释
+
+! 白名单规则，不使用代理
+@@|http://example.com/
+@@|https://secure.example.com/
+
+! 域名规则，使用代理
+||example.org
+||*.example.net
+||example.com
+
+||github.com
+||youtube.com
+
+! 拒绝规则
+||blocked.com^$REJECT
+||baidu.com^$REJECT
+||*.malicious-site.com^$REJECT
+
+! 正则表达式规则，使用代理
+/google\.(com|cn)/
+
+
+@@127.0.0.1
+@@127.0.0.1/24

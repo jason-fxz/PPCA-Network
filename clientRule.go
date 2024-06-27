@@ -7,15 +7,15 @@ import (
 	"net"
 )
 
+var ListenAddr = "127.0.0.1:8081"
+var ProxyAddr = "127.0.0.1:7897"
 
 func main() {
-    // 1. 监听端口
-    var serverAddr = "127.0.0.1:1080"
-    listener, err := net.Listen("tcp", serverAddr)
+    InitRules("autoproxy.txt")
+    listener, err := net.Listen("tcp", ListenAddr)
     if err != nil {
         log.Fatal(err)
     }
-    log.Println("Start server on ", serverAddr)
     defer listener.Close()
 
     for {
@@ -24,7 +24,6 @@ func main() {
             log.Println(err)
             continue
         }
-
         // 处理每个连接
         go handleConnection(conn)
     }
@@ -38,25 +37,91 @@ func handleConnection(conn net.Conn) {
         return
     }
 
-
+    // GET REQUEST
     request := make([]byte, 256)
     n, err := conn.Read(request)
     if err != nil {
         log.Println(err)
         return 
     }
-
     // log.Println("Received Request:", request[:n])
-    
-    // 解析请求的目标地址和端口
+	
     targetAddress, targetPort, err := parseRequest(request[:n])
     if err != nil {
         log.Println(err)
         return 
     }
 
+    log.Print("Target: ", targetAddress, ":", targetPort)
+
+    method, err := Match(targetAddress)
+    if err != nil {
+        log.Println(targetAddress, err)
+    }
 
 
+    switch method {
+    case "REJECT":
+        log.Println("[REJECT]", "Target:", targetAddress, ":", targetPort)
+        forwardByReject(conn)
+    case "PROXY":
+        log.Println("[PROXY]", "Target:", targetAddress, ":", targetPort)
+        forwardByProxy(conn, request, n)
+    case "DIRECT":
+        log.Println("[DIRECT]", "Target:", targetAddress, ":", targetPort)
+        forwardByDirect(conn, targetAddress, targetPort)
+    default:
+        log.Println("Unknown method:", method, "Target: ", targetAddress, ":", targetPort)
+    }
+}
+
+func forwardByReject(conn net.Conn) {
+    reply := []byte{0x05, 0x02, 0x00, 0x01, 0x7f, 0x00, 0x00, 0x01, 0x00, 0x00}
+    conn.Write(reply)
+}
+
+func forwardByProxy(conn net.Conn, request []byte, n int) {
+    // 建立到代理服务器的连接
+    ProxyConn, err := net.Dial("tcp", ProxyAddr)
+    if err != nil {
+        log.Println(err)
+        return
+    }
+    // log.Println("Connected to Proxy Server:", ProxyAddr)
+    if !trynegotiate(ProxyConn) {
+        log.Println("Failed to negotiate with Proxy Server")
+        return
+    }
+    defer ProxyConn.Close()
+    // log.Println("Negotiated with Proxy Server SUCCESS")
+
+    // FORWARD REQUEST
+    _, err = ProxyConn.Write(request[:n])
+    if err != nil {
+        log.Println(err)
+        return
+    }
+
+    // FORWARD REPLY
+    reply := make([]byte, 256)
+    n, err = ProxyConn.Read(reply)
+    if err != nil {
+        log.Println(err)
+        return
+    }
+    // log.Println("(FROM Proxy Server) Received Reply:", reply[:n])
+    conn.Write(reply[:n])
+    if reply[1] != 0x00 {
+        log.Println("(FROM Proxy Server) Failed to connect to target server")
+        return
+    }
+
+    // FORWARD DATA
+    go io.Copy(ProxyConn, conn)
+    io.Copy(conn, ProxyConn)
+}
+
+func forwardByDirect(conn net.Conn, targetAddress string, targetPort int) {
     // 建立到目标服务器的连接
     targetConn, err := net.Dial("tcp", fmt.Sprintf("%s:%d", targetAddress, targetPort))
     if err != nil {
@@ -64,50 +129,6 @@ func handleConnection(conn net.Conn) {
         return 
     }
     defer targetConn.Close()
-
-
-    log.Println("Connected to Target:", targetAddress, targetPort)
-
-    /*
-        The SOCKS request information is sent by the client as soon as it has
-        established a connection to the SOCKS server, and completed the
-        authentication negotiations.  The server evaluates the request, and
-        returns a reply formed as follows:
-
-            +----+-----+-------+------+----------+----------+
-            |VER | REP |  RSV  | ATYP | BND.ADDR | BND.PORT |
-            +----+-----+-------+------+----------+----------+
-            | 1  |  1  | X'00' |  1   | Variable |    2     |
-            +----+-----+-------+------+----------+----------+
-
-        Where:
-
-            o  VER    protocol version: X'05'
-            o  REP    Reply field:
-                o  X'00' succeeded
-                o  X'01' general SOCKS server failure
-                o  X'02' connection not allowed by ruleset
-                o  X'03' Network unreachable
-                o  X'04' Host unreachable
-                o  X'05' Connection refused
-                o  X'06' TTL expired
-                o  X'07' Command not supported
-                o  X'08' Address type not supported
-                o  X'09' to X'FF' unassigned
-            o  RSV    RESERVED
-            o  ATYP   address type of following address
-                o  IP V4 address: X'01'
-                o  DOMAINNAME: X'03'
-                o  IP V6 address: X'04'
-            o  BND.ADDR       server bound address
-            o  BND.PORT       server bound port in network octet order
-
-        Fields marked RESERVED (RSV) must be set to X'00'.
-
-        If the chosen method includes encapsulation for purposes of
-        authentication, integrity and/or confidentiality, the replies are
-        encapsulated in the method-dependent encapsulation.
-    */
 
     reply := []byte{0x05, 0x00, 0x00, 0x01, 0x7f, 0x00, 0x00, 0x01}
     port := targetConn.LocalAddr().(*net.TCPAddr).Port
@@ -117,6 +138,25 @@ func handleConnection(conn net.Conn) {
     // 数据转发
     go io.Copy(targetConn, conn)
     io.Copy(conn, targetConn)
+}
+
+func trynegotiate(conn net.Conn) bool {
+    buf := []byte{0x05, 0x01, 0x00}
+    _, err := conn.Write(buf)
+    if err != nil {
+        log.Println(err)
+        return false
+    }
+    _, err = conn.Read(buf)
+    if err != nil {
+        log.Println(err)
+        return false
+    }
+    if buf[1] != 0x00 {
+        log.Println("Failed to use NO AUTHENTICATION REQUIRED")
+        return false
+    }
+    return true
 }
 
 func negotiate(conn net.Conn) bool {
@@ -175,7 +215,6 @@ func negotiate(conn net.Conn) bool {
 
     return true
 }
-
 
 func parseRequest(request []byte) (address string, port int, err error) {
     /*
