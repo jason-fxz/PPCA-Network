@@ -1,4 +1,4 @@
-// Description: 代理客户端 - 规则匹配 by target address
+// Description: 代理客户端 - 规则匹配 by HTTP
 package main
 
 import (
@@ -6,10 +6,42 @@ import (
 	"io"
 	"log"
 	"net"
+	"strings"
 )
 
 var listenAddr = "127.0.0.1:8081"
 var proxyAddr = "127.0.0.1:7897"
+
+type HTTPHeader map[string]string   // HTTP 头部
+
+func GetHTTPHeader(data []byte) (*HTTPHeader, error) {
+    header := &HTTPHeader{}
+    // 将byte[]转换为字符串
+    text := string(data)
+    // 按行分割
+    lines := strings.Split(text, "\r\n")
+    if len(lines) < 2 {
+        return nil, fmt.Errorf("Invalid HTTP Request")
+    }
+
+    // check GET / HTTP/1.1
+    if !strings.HasSuffix(lines[0], "HTTP/1.1") {
+        return nil, fmt.Errorf("Invalid HTTP Request (Note that we only support HTTP/1.1) %s", lines[0])
+    }
+
+    for _, line := range lines {
+        // 按冒号分隔键和值
+        parts := strings.SplitN(line, ":", 2)
+        if len(parts) == 2 {
+            key := strings.TrimSpace(parts[0])
+            value := strings.TrimSpace(parts[1])
+            // 添加到Headers中
+            (*header)[key] = value
+        }
+    }
+    return header, nil
+}
+
 
 func main() {
     InitRules("autoproxy.txt")
@@ -46,20 +78,38 @@ func handleConnection(conn net.Conn) {
         return 
     }
     // log.Println("Received Request:", request[:n])
-	
+
     targetAddress, targetPort, err := parseRequest(request[:n])
     if err != nil {
         log.Println(err)
         return 
     }
-
     log.Print("Target: ", targetAddress, ":", targetPort)
 
-    method, err := Match(targetAddress)
+    // Make a fake reply
+    reply := []byte{0x05, 0x00, 0x00, 0x01, 0x7f, 0x00, 0x00, 0x01, 0x00, 0x00}
+    conn.Write(reply)
+
+    // Read the HTTP request headers
+    buf := make([]byte, 102400)
+    bufn, err := conn.Read(buf)
+    if err != nil {
+        log.Println(err)
+    }
+    
+    header, err := GetHTTPHeader(buf)
+    host := targetAddress
+    if err != nil {
+        log.Println(err)
+    } else {
+        log.Println("Host:", host)
+        host = (*header)["Host"]
+    }
+    
+    method, err := Match(host)
     if err != nil {
         log.Println(targetAddress, err)
     }
-
 
     switch method {
     case "REJECT":
@@ -67,10 +117,10 @@ func handleConnection(conn net.Conn) {
         forwardByReject(conn)
     case "PROXY":
         log.Println("[PROXY]", "Target:", targetAddress, ":", targetPort)
-        forwardByProxy(conn, request, n)
+        forwardByProxyBuf(conn, request, n, buf, bufn)
     case "DIRECT":
         log.Println("[DIRECT]", "Target:", targetAddress, ":", targetPort)
-        forwardByDirect(conn, targetAddress, targetPort)
+        forwardByDirectBuf(conn, targetAddress, targetPort, buf, bufn)
     default:
         log.Println("Unknown method:", method, "Target: ", targetAddress, ":", targetPort)
     }
@@ -81,23 +131,23 @@ func forwardByReject(conn net.Conn) {
     conn.Write(reply)
 }
 
-func forwardByProxy(conn net.Conn, request []byte, n int) {
+func forwardByProxyBuf(conn net.Conn, request []byte, n int, buf []byte, bufn int) {
     // 建立到代理服务器的连接
-    ProxyConn, err := net.Dial("tcp", proxyAddr)
+    proxyConn, err := net.Dial("tcp", proxyAddr)
     if err != nil {
         log.Println(err)
         return
     }
     // log.Println("Connected to Proxy Server:", ProxyAddr)
-    if !trynegotiate(ProxyConn) {
+    if !trynegotiate(proxyConn) {
         log.Println("Failed to negotiate with Proxy Server")
         return
     }
-    defer ProxyConn.Close()
+    defer proxyConn.Close()
     // log.Println("Negotiated with Proxy Server SUCCESS")
 
     // FORWARD REQUEST
-    _, err = ProxyConn.Write(request[:n])
+    _, err = proxyConn.Write(request[:n])
     if err != nil {
         log.Println(err)
         return
@@ -105,24 +155,25 @@ func forwardByProxy(conn net.Conn, request []byte, n int) {
 
     // FORWARD REPLY
     reply := make([]byte, 256)
-    n, err = ProxyConn.Read(reply)
+    n, err = proxyConn.Read(reply)
     if err != nil {
         log.Println(err)
         return
     }
-    // log.Println("(FROM Proxy Server) Received Reply:", reply[:n])
-    conn.Write(reply[:n])
+    // We should not send the reply to the client, Since we have made a fake reply
+    // conn.Write(reply[:n])
     if reply[1] != 0x00 {
         log.Println("(FROM Proxy Server) Failed to connect to target server")
         return
     }
 
     // FORWARD DATA
-    go io.Copy(ProxyConn, conn)
-    io.Copy(conn, ProxyConn)
+    proxyConn.Write(buf[:bufn])
+    go io.Copy(proxyConn, conn)
+    io.Copy(conn, proxyConn)
 }
 
-func forwardByDirect(conn net.Conn, targetAddress string, targetPort int) {
+func forwardByDirectBuf(conn net.Conn, targetAddress string, targetPort int, buf []byte, bufn int) {
     // 建立到目标服务器的连接
     targetConn, err := net.Dial("tcp", fmt.Sprintf("%s:%d", targetAddress, targetPort))
     if err != nil {
@@ -131,12 +182,14 @@ func forwardByDirect(conn net.Conn, targetAddress string, targetPort int) {
     }
     defer targetConn.Close()
 
-    reply := []byte{0x05, 0x00, 0x00, 0x01, 0x7f, 0x00, 0x00, 0x01}
-    port := targetConn.LocalAddr().(*net.TCPAddr).Port
-    reply = append(reply, byte(port>>8), byte(port&0xff))
-    _, err = conn.Write(reply)
+    // We should not send the reply to the client, Since we have made a fake reply
+    // reply := []byte{0x05, 0x00, 0x00, 0x01, 0x7f, 0x00, 0x00, 0x01}
+    // port := targetConn.LocalAddr().(*net.TCPAddr).Port
+    // reply = append(reply, byte(port>>8), byte(port&0xff))
+    // _, err = conn.Write(reply)
 
     // 数据转发
+    targetConn.Write(buf[:bufn])
     go io.Copy(targetConn, conn)
     io.Copy(conn, targetConn)
 }

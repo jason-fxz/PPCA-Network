@@ -122,26 +122,3 @@ func Match(url string) (string, error) {
 	}
 	return "DIRECT", fmt.Errorf("UNMATCH")
 }
-
-// func main() {
-//     InitRules("autoproxy.txt")
-// 	log.Println(Match("https://baidu.cn"))
-
-
-//     // // 示例匹配操作
-//     // testString := "https://google.com"
-//     // fmt.Println("\nTesting against string:", testString)
-
-//     // for _, pattern := range regexPatterns {
-//         // re, err := regexp.Compile(pattern)
-//     //     if err != nil {
-//     //         fmt.Println("Invalid regex pattern:", pattern)
-//     //         continue
-//     //     }
-//     //     if re.MatchString(testString) {
-//     //         fmt.Printf("Pattern %q matches %q\n", pattern, testString)
-//     //     } else {
-//     //         fmt.Printf("Pattern %q does not match %q\n", pattern, testString)
-//     //     }
-//     // }
-// }

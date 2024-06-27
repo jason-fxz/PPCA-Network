@@ -7,7 +7,7 @@ import (
 )
 
 var ListenAddr = "127.0.0.1:8081"
-var ProxyAddr = "127.0.0.1:1080"
+var proxyAddr = "127.0.0.1:1080"
 
 func main() {
     // 1. 监听端口
@@ -38,12 +38,12 @@ func handleConnection(conn net.Conn) {
     }
     
     // 建立到代理服务器的连接
-    ProxyConn, err := net.Dial("tcp", ProxyAddr)
+    ProxyConn, err := net.Dial("tcp", proxyAddr)
     if err != nil {
         log.Println(err)
         return
     }
-    log.Println("Connected to Proxy Server:", ProxyAddr)
+    log.Println("Connected to Proxy Server:", proxyAddr)
     if !trynegotiate(ProxyConn) {
         log.Println("Failed to negotiate with Proxy Server")
         return
