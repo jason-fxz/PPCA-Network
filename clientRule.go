@@ -12,7 +12,7 @@ var listenAddr = "127.0.0.1:8081"
 var proxyAddr = "127.0.0.1:7897"
 
 func main() {
-    InitRules("autoproxy.txt")
+    InitHostRules("autoproxy.txt")
     listener, err := net.Listen("tcp", listenAddr)
     if err != nil {
         log.Fatal(err)

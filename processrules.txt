@@ -1,0 +1,13 @@
+# This file contains the rules for the process
+# 这是一行注释
+
+# 格式为 [程序名] [方式]
+# 程序名为执行程序名，可以带通配符
+# 方式为 PROXY | REJECT | DIRECT
+
+chrome* PROXY
+Code.exe DIRECT
+clash*.exe DIRECT
+github* DIRECT
+
+
