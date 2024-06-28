@@ -1,7 +1,8 @@
-// Description: 代理客户端 - 规则匹配 by HTTP
+// Description: 代理客户端 - 规则匹配 by HTTP / TLS
 package main
 
 import (
+	"encoding/binary"
 	"fmt"
 	"io"
 	"log"
@@ -14,7 +15,103 @@ var proxyAddr = "127.0.0.1:7897"
 
 type HTTPHeader map[string]string   // HTTP 头部
 
-func GetHTTPHeader(data []byte) (*HTTPHeader, error) {
+// WTF!!
+// 解析 TLS ClientHello 报文并提取 SNI 
+func extractSNI(clientHello []byte) (string, error) {
+	if len(clientHello) < 5 || clientHello[0] != 0x16 {
+		return "", fmt.Errorf("not a valid TLS ClientHello message")
+	}
+
+	recordLength := int(binary.BigEndian.Uint16(clientHello[3:5]))
+	if len(clientHello) < 5+recordLength {
+		return "", fmt.Errorf("incomplete TLS record")
+	}
+
+	clientHello = clientHello[5 : 5+recordLength]
+	if len(clientHello) < 38 {
+		return "", fmt.Errorf("invalid ClientHello length")
+	}
+
+	sessionIDLength := int(clientHello[38])
+	if len(clientHello) < 39+sessionIDLength {
+		return "", fmt.Errorf("invalid session ID length")
+	}
+
+	clientHello = clientHello[39+sessionIDLength:]
+	if len(clientHello) < 2 {
+		return "", fmt.Errorf("invalid cipher suites length")
+	}
+
+	cipherSuitesLength := int(binary.BigEndian.Uint16(clientHello[:2]))
+	if len(clientHello) < 2+cipherSuitesLength {
+		return "", fmt.Errorf("invalid cipher suites length")
+	}
+
+	clientHello = clientHello[2+cipherSuitesLength:]
+	if len(clientHello) < 1 {
+		return "", fmt.Errorf("invalid compression methods length")
+	}
+
+	compressionMethodsLength := int(clientHello[0])
+	if len(clientHello) < 1+compressionMethodsLength {
+		return "", fmt.Errorf("invalid compression methods length")
+	}
+
+	clientHello = clientHello[1+compressionMethodsLength:]
+	if len(clientHello) < 2 {
+		return "", fmt.Errorf("invalid extensions length")
+	}
+
+	extensionsLength := int(binary.BigEndian.Uint16(clientHello[:2]))
+	clientHello = clientHello[2:]
+	if len(clientHello) < extensionsLength {
+		return "", fmt.Errorf("invalid extensions length")
+	}
+
+	for len(clientHello) >= 4 {
+		extensionType := binary.BigEndian.Uint16(clientHello[:2])
+		extensionDataLength := int(binary.BigEndian.Uint16(clientHello[2:4]))
+
+		if len(clientHello) < 4+extensionDataLength {
+			return "", fmt.Errorf("invalid extension data length")
+		}
+
+		if extensionType == 0x0000 {
+			serverNameList := clientHello[4:4+extensionDataLength]
+			if len(serverNameList) < 2 {
+				return "", fmt.Errorf("invalid server name list length")
+			}
+
+			serverNameLength := int(binary.BigEndian.Uint16(serverNameList[:2]))
+			serverNameList = serverNameList[2:]
+			if len(serverNameList) < serverNameLength {
+				return "", fmt.Errorf("invalid server name length")
+			}
+
+			for len(serverNameList) >= 3 {
+				nameType := serverNameList[0]
+				nameLength := int(binary.BigEndian.Uint16(serverNameList[1:3]))
+
+				if len(serverNameList) < 3+nameLength {
+					return "", fmt.Errorf("invalid server name length")
+				}
+
+				if nameType == 0 {
+					return string(serverNameList[3 : 3+nameLength]), nil
+				}
+
+				serverNameList = serverNameList[3+nameLength:]
+			}
+		}
+
+		clientHello = clientHello[4+extensionDataLength:]
+	}
+
+	return "", fmt.Errorf("SNI not found")
+}
+
+
+func getHTTPHeader(data []byte) (*HTTPHeader, error) {
     header := &HTTPHeader{}
     // 将byte[]转换为字符串
     text := string(data)
@@ -91,19 +188,27 @@ func handleConnection(conn net.Conn) {
     conn.Write(reply)
 
     // Read the HTTP request headers
-    buf := make([]byte, 102400)
+    buf := make([]byte, 4096)
     bufn, err := conn.Read(buf)
     if err != nil {
         log.Println(err)
     }
+
     
-    header, err := GetHTTPHeader(buf)
-    host := targetAddress
+    header, err := getHTTPHeader(buf)
+    
+    host := ""
     if err != nil {
-        log.Println(err)
+        sni, err := extractSNI(buf[:bufn])
+        if err != nil {
+            // log.Println("Extract SNI failed:", err)
+        }
+        log.Println("Get Host FROM TLS SNI:", sni)
+        host = sni
+        // log.Println(err)
     } else {
-        log.Println("Host:", host)
         host = (*header)["Host"]
+        log.Println("Get Host FROM HTTP/1.1 Header :", host)
     }
     
     method, err := Match(host)
