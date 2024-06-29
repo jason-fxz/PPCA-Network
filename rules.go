@@ -3,7 +3,6 @@ package main
 import (
 	"bufio"
 	"fmt"
-	"log"
 	"net"
 	"os"
 	"regexp"
@@ -42,9 +41,10 @@ func isIPInCIDR(ipStr string, cidrStr string) (bool, error) {
 var rules []hostrule
 
 func InitHostRules(filename string) {
+	Log.Info("Loading rules from file: ", filename)
 	file, err := os.Open(filename)
     if err != nil {
-        fmt.Println("Error opening file:", err)
+        Log.Fatal("Error opening file:", err)
         return
     }
     defer file.Close()
@@ -53,9 +53,13 @@ func InitHostRules(filename string) {
 
     // 创建文件扫描器
     scanner := bufio.NewScanner(file)
+	linecount := 0
     for scanner.Scan() {
+		linecount++
 		method := "PROXY"
-        line := strings.TrimSpace(scanner.Text())
+		line_raw := scanner.Text()
+        line := strings.TrimSpace(line_raw)
+
 		if line == "[Autoproxy]" {
 			continue
 		}
@@ -89,14 +93,17 @@ func InitHostRules(filename string) {
         } else if _, _, err := net.ParseCIDR(line); err == nil{
 			// CIDR IP 段
 			rules = append(rules, hostrule{0x01, line, method})
-        }
+        } else {
+			Log.Warn("Invalid rule in line: ", linecount, ": ", line_raw)
+			continue
+		}
     }
 
-    if err := scanner.Err(); err != nil {
-        fmt.Println("Error reading file:", err)
+	if err := scanner.Err(); err != nil {
+        Log.Fatal("Error reading file:", err)
         return
     }
-	log.Println(rules)
+	Log.Info("Rules: ", rules)
 }
 
 // return METHOD: PROXY | DIRECT | REJECT
@@ -122,14 +129,15 @@ func Match(host string) (string, error) {
 			}
 		}
 	}
-	return "DIRECT", fmt.Errorf("UNMATCH")
+	return "PROXY", fmt.Errorf("UNMATCH")
 }
 
 
 func InitProcessRules(filename string) {
+	Log.Info("Loading rules from file:", filename)
 	file, err := os.Open(filename)
     if err != nil {
-        fmt.Println("Error opening file:", err)
+        Log.Fatal("Error opening file:", err)
         return
     }
     defer file.Close()
@@ -138,6 +146,7 @@ func InitProcessRules(filename string) {
 
     // 创建文件扫描器
     scanner := bufio.NewScanner(file)
+	linecount := 0
     for scanner.Scan() {
         line := strings.TrimSpace(scanner.Text())
         // 跳过注释和空行
@@ -156,7 +165,7 @@ func InitProcessRules(filename string) {
 			pattern = line[:len(line)-7]
 			method = "REJECT"
 		} else {
-			log.Println("Invalid process rule:", line)
+			Log.Warn("Invalid rule in line: ", linecount, ": ", line)
 			continue
 		}
 		pattern = strings.Replace(pattern, ".", "\\.", -1)
@@ -165,8 +174,8 @@ func InitProcessRules(filename string) {
     }
 
     if err := scanner.Err(); err != nil {
-        fmt.Println("Error reading file:", err)
+        Log.Fatal("Error reading file:", err)
         return
     }
-	log.Println(rules)
+	Log.Info("Rules: ", rules)
 }

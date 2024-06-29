@@ -30,18 +30,18 @@ clean:
 
 rule: clean
 	@echo "Building rule"
-	go build -o $(BINARY) clientRule.go rules.go
+	go build -o $(BINARY) clientRule.go rules.go colorfulLog.go
 	./$(BINARY)
 
 
 ruleHTTP: clean
 	@echo "Building ruleHTTP"
-	go build -o $(BINARY) clientRuleHTTP.go rules.go
+	go build -o $(BINARY) clientRuleHTTP.go rules.go colorfulLog.go
 	./$(BINARY)
 
 rulePID: clean
 	@echo "Building ruleProcess"
-	go build -o $(BINARY) clientRuleProcess.go rules.go oscmd.go
+	go build -o $(BINARY) clientRuleProcess.go rules.go oscmd.go colorfulLog.go
 	./$(BINARY)
 
 

@@ -4,7 +4,6 @@ package main
 import (
 	"fmt"
 	"io"
-	"log"
 	"net"
 )
 
@@ -15,14 +14,17 @@ func main() {
     InitHostRules("autoproxy.txt")
     listener, err := net.Listen("tcp", listenAddr)
     if err != nil {
-        log.Fatal(err)
+        Log.Fatal(err)
     }
     defer listener.Close()
+
+    Log.Info("Listening on ", listenAddr)
+
 
     for {
         conn, err := listener.Accept()
         if err != nil {
-            log.Println(err)
+            Log.Warn(err)
             continue
         }
         // 处理每个连接
@@ -34,7 +36,7 @@ func handleConnection(conn net.Conn) {
     defer conn.Close()
 
     if !negotiate(conn) {
-        log.Println("Failed to negotiate with client")
+        Log.Error("Failed to negotiate with client")
         return
     }
 
@@ -42,37 +44,37 @@ func handleConnection(conn net.Conn) {
     request := make([]byte, 256)
     n, err := conn.Read(request)
     if err != nil {
-        log.Println(err)
+        Log.Error(err)
         return 
     }
     // log.Println("Received Request:", request[:n])
 	
     targetAddress, targetPort, err := parseRequest(request[:n])
     if err != nil {
-        log.Println(err)
+        Log.Error(err)
         return 
     }
 
-    log.Print("Target: ", targetAddress, ":", targetPort)
+    // log.Print("Target: ", targetAddress, ":", targetPort)
 
     method, err := Match(targetAddress)
     if err != nil {
-        log.Println(targetAddress, err)
+        Log.Warn(targetAddress," ", err)
     }
-
+    
 
     switch method {
     case "REJECT":
-        log.Println("[REJECT]", "Target:", targetAddress, ":", targetPort)
+        Log.Info("[REJECT] ", "Target: ", targetAddress, ":", targetPort)
         forwardByReject(conn)
     case "PROXY":
-        log.Println("[PROXY]", "Target:", targetAddress, ":", targetPort)
+        Log.Info("[PROXY] ", "Target: ", targetAddress, ":", targetPort)
         forwardByProxy(conn, request, n)
     case "DIRECT":
-        log.Println("[DIRECT]", "Target:", targetAddress, ":", targetPort)
+        Log.Info("[DIRECT] ", "Target: ", targetAddress, ":", targetPort)
         forwardByDirect(conn, targetAddress, targetPort)
     default:
-        log.Println("Unknown method:", method, "Target: ", targetAddress, ":", targetPort)
+        Log.Error("Unknown method:", method, "Target: ", targetAddress, ":", targetPort)
     }
 }
 
@@ -85,21 +87,19 @@ func forwardByProxy(conn net.Conn, request []byte, n int) {
     // 建立到代理服务器的连接
     ProxyConn, err := net.Dial("tcp", proxyAddr)
     if err != nil {
-        log.Println(err)
+        Log.Error(err)
         return
     }
-    // log.Println("Connected to Proxy Server:", ProxyAddr)
     if !trynegotiate(ProxyConn) {
-        log.Println("Failed to negotiate with Proxy Server")
+        Log.Error("Failed to negotiate with Proxy Server")
         return
     }
     defer ProxyConn.Close()
-    // log.Println("Negotiated with Proxy Server SUCCESS")
 
     // FORWARD REQUEST
     _, err = ProxyConn.Write(request[:n])
     if err != nil {
-        log.Println(err)
+        Log.Error(err)
         return
     }
 
@@ -107,13 +107,12 @@ func forwardByProxy(conn net.Conn, request []byte, n int) {
     reply := make([]byte, 256)
     n, err = ProxyConn.Read(reply)
     if err != nil {
-        log.Println(err)
+        Log.Error(err)
         return
     }
-    // log.Println("(FROM Proxy Server) Received Reply:", reply[:n])
     conn.Write(reply[:n])
     if reply[1] != 0x00 {
-        log.Println("(FROM Proxy Server) Failed to connect to target server")
+        Log.Error("(FROM Proxy Server) Failed to connect to target server")
         return
     }
 
@@ -126,7 +125,7 @@ func forwardByDirect(conn net.Conn, targetAddress string, targetPort int) {
     // 建立到目标服务器的连接
     targetConn, err := net.Dial("tcp", fmt.Sprintf("%s:%d", targetAddress, targetPort))
     if err != nil {
-        log.Println(err)
+        Log.Error(err)
         return 
     }
     defer targetConn.Close()
@@ -145,16 +144,16 @@ func trynegotiate(conn net.Conn) bool {
     buf := []byte{0x05, 0x01, 0x00}
     _, err := conn.Write(buf)
     if err != nil {
-        log.Println(err)
+        Log.Error(err)
         return false
     }
     _, err = conn.Read(buf)
     if err != nil {
-        log.Println(err)
+        Log.Error(err)
         return false
     }
     if buf[1] != 0x00 {
-        log.Println("Failed to use NO AUTHENTICATION REQUIRED")
+        Log.Error("Failed to use NO AUTHENTICATION REQUIRED")
         return false
     }
     return true
@@ -168,7 +167,7 @@ func negotiate(conn net.Conn) bool {
     buf := make([]byte, 256)
     n, err := conn.Read(buf)
     if err != nil {
-        log.Println(err)
+        Log.Error(err)
         return false
     }
 
@@ -210,7 +209,7 @@ func negotiate(conn net.Conn) bool {
     response := []byte{0x05, selectedMethod}
     _, err = conn.Write(response)
     if err != nil {
-        log.Println(err)
+        Log.Error(err)
         return false
     }
 
