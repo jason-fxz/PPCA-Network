@@ -2,6 +2,7 @@
 package main
 
 import (
+	"bytes"
 	"encoding/binary"
 	"fmt"
 	"io"
@@ -190,8 +191,7 @@ func handleConnection(conn net.Conn) {
     conn.Write(reply)
 
     // Read the HTTP / TLS request
-    buf := make([]byte, 4096)
-    bufn, err := conn.Read(buf)
+    bufn, buf, err := readtoBuffer(conn)
     if err != nil {
         Log.Error(err)
     }
@@ -369,6 +369,28 @@ func negotiate(conn net.Conn) bool {
     }
 
     return true
+}
+
+func readtoBuffer(conn net.Conn) (int, []byte, error) {
+	var Buf bytes.Buffer
+	buffer := make([]byte, 4096)
+	for {
+		n, err := conn.Read(buffer)
+		if err != nil {
+			if err != io.EOF {
+				return 0, nil, err
+			}
+			break
+		}
+		_, err = Buf.Write(buffer[:n])
+		if err != nil {
+			return 0, nil, err
+		}
+		if n < len(buffer) {
+			break
+		}
+	}
+	return Buf.Len(), Buf.Bytes(), nil
 }
 
 func parseRequest(request []byte) (address string, port int, err error) {

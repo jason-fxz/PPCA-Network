@@ -39,6 +39,11 @@ ruleHTTP: clean
 	go build -o $(BINARY) clientRuleHTTP.go rules.go colorfulLog.go
 	./$(BINARY)
 
+HTTP: clean
+	@echo "Building HTTP"
+	go build -o $(BINARY) HTTPaction.go rules.go colorfulLog.go
+	./$(BINARY)
+
 rulePID: clean
 	@echo "Building ruleProcess"
 	go build -o $(BINARY) clientRuleProcess.go rules.go oscmd.go colorfulLog.go
@@ -50,8 +55,6 @@ run:
 	@echo "Running project..."
 	./$(BINARY)
 
-# 一键初始化、获取依赖并运行项目
-all: init deps run
 
 # 帮助信息
 help:
@@ -59,7 +62,6 @@ help:
 	@echo "  make init     - Initialize Go module"
 	@echo "  make deps     - Get dependencies"
 	@echo "  make clean    - Clean generated files"
-	@echo "  make build    - Build the project"
+	@echo "  make rule|ruleHTTP|HTTP|rulePID - Build and run the project"
 	@echo "  make run      - Run the project"
-	@echo "  make all      - Initialize, get dependencies, and run the project"
 	@echo "  make help     - Show this help message"
