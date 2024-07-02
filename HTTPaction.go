@@ -18,6 +18,7 @@ var proxyAddr = "127.0.0.1:7897"
 
 func main() {
     InitHostRules("autoproxy.txt")
+    initModifyRules()
     listener, err := net.Listen("tcp", listenAddr)
     if err != nil {
         Log.Fatal(err)
@@ -82,7 +83,7 @@ func handleConnection(conn net.Conn) {
         forwardByReject(conn)
     case "PROXY":
         Log.Info("[PROXY] ", "Target: ", targetAddress, ":", targetPort)
-        forwardByProxy(conn, request, n, targetPort)
+        forwardByProxy(conn, request, n, targetAddress, targetPort)
     case "DIRECT":
         Log.Info("[DIRECT] ", "Target: ", targetAddress, ":", targetPort)
         forwardByDirect(conn, targetAddress, targetPort)
@@ -96,7 +97,7 @@ func forwardByReject(conn net.Conn) {
     conn.Write(reply)
 }
 
-func forwardByProxy(conn net.Conn, request []byte, n int, targetPort int) {
+func forwardByProxy(conn net.Conn, request []byte, n int, targetAddress string, targetPort int) {
     // 建立到代理服务器的连接
     ProxyConn, err := net.Dial("tcp", proxyAddr)
     if err != nil {
@@ -130,7 +131,7 @@ func forwardByProxy(conn net.Conn, request []byte, n int, targetPort int) {
     }
 
     // FORWARD DATA
-    forwardData(conn, ProxyConn, targetPort)
+    forwardData(conn, ProxyConn, targetAddress, targetPort)
 }
 
 func forwardByDirect(conn net.Conn, targetAddress string, targetPort int) {
@@ -148,7 +149,7 @@ func forwardByDirect(conn net.Conn, targetAddress string, targetPort int) {
     _, err = conn.Write(reply)
 
     // 数据转发
-    forwardData(conn, targetConn, targetPort)
+    forwardData(conn, targetConn, targetAddress, targetPort)
 }
 
 func trynegotiate(conn net.Conn) bool {
@@ -305,37 +306,72 @@ func readtoBuffer(conn net.Conn) (int, []byte, error) {
 	return Buf.Len(), Buf.Bytes(), nil
 }
 
-func writeFile(filename string, data []byte) error {
+func writeFile(filename string, v ...interface{}) error {
     file, err := os.OpenFile(filename, os.O_APPEND|os.O_CREATE|os.O_WRONLY, 0644)
     if err != nil {
         return err
     }
     defer file.Close()
-    _, err = file.Write(data)
+    _, err = fmt.Fprintln(file, v...)
     return err
 }
 
 
+var addrToFunc = make(map[string]func(*http.Request, *http.Response) error)
+
+func initModifyRules() {
+    addrToFunc["poj.org:80"] = func(request *http.Request, response *http.Response) error {
+        Log.Debug("Modifying response from poj.org:80")
+        // Read the response body
+        body, err := io.ReadAll(response.Body)
+        if err != nil {
+            return err
+        }
+        // Replace the desired string
+        if request.URL.Path == "/" {
+            body = bytes.Replace(body, []byte("Welcome To PKU JudgeOnline"), []byte("Welcome to ACM Class OnlineJudge"), -1)
+            body = bytes.Replace(body, []byte("blue"), []byte("red"), -1)
+            body = bytes.Replace(body, []byte("images/logo0.gif"), []byte("https://www.sjtu.edu.cn/resource/assets/img/LogoWhite.png"), -1)
+            body = bytes.Replace(body, []byte("images/logo1.jpg"), []byte("https://www.sjtu.edu.cn/resource/upload/201811/20181114_061432_161.png"), -1)
+        }
+        if request.URL.Path == "/poj.css" {
+            body = bytes.Replace(body, []byte("#6589d1"), []byte("#cf3c68"), -1)
+            body = bytes.Replace(body, []byte("#6589D1"), []byte("#cf3c68"), -1)
+        }
+
+         
+        
+        // Update the response body with the modified content
+        response.Body = io.NopCloser(bytes.NewReader(body))
+
+        return nil
+    }
+}
 // HTTP 捕获
-func forwardData(cli net.Conn, srv net.Conn, port int) {
+func forwardData(cli net.Conn, srv net.Conn, addr string, port int) {
     if port != 443 {
         for true {
-            err := captureHTTP(cli, srv)
+            err := captureHTTP(cli, srv, addrToFunc[fmt.Sprintf("%s:%d", addr, port)])
             if err != nil {
                 Log.Error(err)
                 return
             }
         } 
+        // Log.Debug("HTTP Capture Done")
     } else {
         go io.Copy(srv, cli)
         io.Copy(cli, srv)    
     }
 }
 
-func captureHTTP(cli net.Conn, srv net.Conn) error {
+func captureHTTP(cli net.Conn, srv net.Conn, handleResponse func(*http.Request, *http.Response) error) error {
+    // defer cli.Close()
+
     // Get request from cli
     request, err := http.ReadRequest(bufio.NewReader(cli))
     if err != nil {
+        Log.Error(err)
+        Log.Debug(cli.RemoteAddr())
         return err
     }
     
@@ -343,32 +379,30 @@ func captureHTTP(cli net.Conn, srv net.Conn) error {
     var serializedRequest bytes.Buffer
     err = request.Write(&serializedRequest)
     if err != nil {
-        return err
-    }
-
-    // 将序列化的请求写入文件
-    err = writeFile(fmt.Sprintf("./HTTPLog/%s.request", time.Now().Format("2006-01-02_15.04.05")), serializedRequest.Bytes())
-    if err != nil {
+        Log.Error(err)
         return err
     }
 
     // 转发请求到 srv
     _, err = srv.Write(serializedRequest.Bytes())
     if err != nil {
+        Log.Error(err)
         return err
     }
     
     // Get response from srv
     response, err := http.ReadResponse(bufio.NewReader(srv), request)
     if err != nil {
+        Log.Error(err)
         return err
     }
-
+    
     // 检查响应是否使用了 gzip 压缩
     if response.Header.Get("Content-Encoding") == "gzip" {
         // 创建 gzip 解压缩读取器
         gzipReader, err := gzip.NewReader(response.Body)
         if err != nil {
+            Log.Error(err)
             return err
         }
         
@@ -376,45 +410,64 @@ func captureHTTP(cli net.Conn, srv net.Conn) error {
         var decompressedBody bytes.Buffer
         _, err = io.Copy(&decompressedBody, gzipReader)
         if err != nil {
+            Log.Error(err)
             return err
         }
         
-        
-        
         // 替换响应体为解压后的数据
         response.Body = io.NopCloser(&decompressedBody)
-        
-        Log.Debug(response.Body)
-
         response.Header.Del("Content-Encoding")
         gzipReader.Close()
     }
-    Log.Debug(response)
 
+    
+    // Call handleResponse function
+    if handleResponse != nil {
+        err = handleResponse(request, response)
+        if err != nil {
+            Log.Error(err)
+            return err
+        }
+    }
+    
+
+    // 读取 response.Body 的全部内容
+    bodyBytes, err := io.ReadAll(response.Body)
+    if err != nil {
+        Log.Error(err)
+        return err
+    }
+    // 确保后续操作可以重新读取 response.Body
+    response.Body = io.NopCloser(bytes.NewBuffer(bodyBytes))
+
+    // 获取 body 的长度
+    bodyLength := len(bodyBytes)
+    Log.Debug("Body length:", bodyLength)
+    
+    // 重新设置 Content-Length
+    response.ContentLength = int64(bodyLength)
+    response.Header.Set("Content-Length", fmt.Sprintf("%d", bodyLength))
 
     // 序列化 HTTP 响应到缓冲区
     var serializedResponse bytes.Buffer
-    statusline := fmt.Sprintf("HTTP/%d.%d %d %s\r\n", response.ProtoMajor, response.ProtoMinor, response.StatusCode, response.Status)
-    serializedResponse.WriteString(statusline)
-    err = response.Header.Write(&serializedResponse)
+    err = response.Write(&serializedResponse)
     if err != nil {
+        Log.Error(err)
         return err
     }
-    serializedResponse.WriteString("\r\n")
-    _, err = io.Copy(&serializedResponse, response.Body)
+    // Log 
+    err = writeFile(fmt.Sprintf("./HTTPLog/%s.log", time.Now().Format("2006-01-02_15.04.05")),
+        "[Request]\r\n", serializedRequest.String(), 
+        "[Response]\r\n", serializedResponse.String(), "\r\n\r\n")
     if err != nil {
+        Log.Error(err)
         return err
     }
 
-    // Log 
-    err = writeFile(fmt.Sprintf("./HTTPLog/%s.response", time.Now().Format("2006-01-02_15.04.05")), serializedResponse.Bytes())
-    if err != nil {
-        return err
-    }
-    
     // 转发回复到 cli
     _, err = cli.Write(serializedResponse.Bytes())
     if err != nil {
+        Log.Error(err)
         return err
     }
     return nil

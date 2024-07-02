@@ -16,7 +16,7 @@
 
 ! 拒绝规则
 ||blocked.com^$REJECT
-||baidu.com^$REJECT
+!||baidu.com^$REJECT
 ||*.malicious-site.com^$REJECT
 
 ! 正则表达式规则，使用代理
