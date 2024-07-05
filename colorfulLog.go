@@ -12,7 +12,7 @@ const (
     InfoColor    = "\033[1;34m[INFO]\033[0m "
     WarningColor = "\033[1;33m[WARN]\033[0m "
     ErrorColor   = "\033[1;31m[ERR]\033[0m "
-    FatalColor   = "\033[1;35[FATAL]\033[0m "
+    FatalColor   = "\033[1;35m[FATAL]\033[0m "
     DebugColor   = "\033[1;36m[DEBUG]\033[0m "
 )
 
@@ -43,7 +43,8 @@ func (l *Logger) Debug(v ...interface{}) {
 
 // Fatal logs fatal messages in purple and exits
 func (l *Logger) Fatal(v ...interface{}) {
-    log.Print(FatalColor, fmt.Sprint(v...))
+    _, file, line, _ := runtime.Caller(1)
+    log.Print(FatalColor, fmt.Sprintf("in file %s:%d: ", file, line), fmt.Sprint(v...))
     os.Exit(1)
 }
 

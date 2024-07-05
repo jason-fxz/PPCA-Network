@@ -49,6 +49,10 @@ rulePID: clean
 	go build -o $(BINARY) clientRuleProcess.go rules.go oscmd.go colorfulLog.go
 	./$(BINARY)
 
+hack: clean
+	@echo "Building hacker"
+	go build -o $(BINARY) hacker0.go rules.go colorfulLog.go
+	./$(BINARY)
 
 # 运行项目
 run:

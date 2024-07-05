@@ -119,12 +119,12 @@ func getHTTPHeader(data []byte) (*HTTPHeader, error) {
     // 按行分割
     lines := strings.Split(text, "\r\n")
     if len(lines) < 2 {
-        return nil, fmt.Errorf("Invalid HTTP Request")
+        return header, fmt.Errorf("Invalid HTTP Request")
     }
 
     // check GET / HTTP/1.1
     if !strings.HasSuffix(lines[0], "HTTP/1.1") {
-        return nil, fmt.Errorf("Invalid HTTP Request (Note that we only support HTTP/1.1) %s", lines[0])
+        return header, fmt.Errorf("Invalid HTTP Request (Note that we only support HTTP/1.1) %s", lines[0])
     }
 
     for _, line := range lines {
