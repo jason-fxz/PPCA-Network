@@ -1,2 +1,3 @@
+# Generate a root CA
 openssl genrsa -out mitmproxyCA.key 2048
 openssl req -x509 -new -nodes -key mitmproxyCA.key -sha256 -days 3650 -out mitmproxyCA.pem
