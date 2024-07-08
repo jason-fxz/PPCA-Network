@@ -36,21 +36,11 @@ func handleRuleProcessConnection(conn net.Conn, proxyAddr string) {
 	}
 
 	// GET REQUEST
-	request := make([]byte, 256)
-	n, err := conn.Read(request)
+	targetAddress, targetPort, err := GetRequest(conn)
 	if err != nil {
 		Log.Error(err)
 		return
 	}
-	// log.Println("Received Request:", request[:n])
-
-	targetAddress, targetPort, err := ParseRequest(request[:n])
-	if err != nil {
-		Log.Error(err)
-		return
-	}
-
-	// log.Print("Target: ", targetAddress, ":", targetPort)
 
 	// Get the Port
 	port := conn.RemoteAddr().(*net.TCPAddr).Port
@@ -74,7 +64,7 @@ func handleRuleProcessConnection(conn net.Conn, proxyAddr string) {
 		ruleForwardByReject(conn)
 	case "PROXY":
 		Log.Info("[PROXY] ", "Process: ", name, " PID: ", pid)
-		ruleForwardByProxy(conn, request, n, proxyAddr)
+		ruleForwardByProxy(conn, targetAddress, targetPort, proxyAddr)
 	case "DIRECT":
 		Log.Info("[DIRECT] ", "Process: ", name, " PID: ", pid)
 		ruleForwardByDirect(conn, targetAddress, targetPort)

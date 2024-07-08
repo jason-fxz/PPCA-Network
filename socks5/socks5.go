@@ -3,42 +3,65 @@ package socks5
 
 import (
 	"fmt"
+	"io"
 	"net"
 )
 
 func Negotiate(conn net.Conn) bool {
-	// 实现版本协商和认证方式选择的逻辑
-	// 读取客户端发送的协商请求
-	// log.Println("============= BEGIN Negotiation =============")
+	/*
+	   The client connects to the server, and sends a version
+	   identifier/method selection message:
 
-	buf := make([]byte, 256)
-	n, err := conn.Read(buf)
+	                   +----+----------+----------+
+	                   |VER | NMETHODS | METHODS  |
+	                   +----+----------+----------+
+	                   | 1  |    1     | 1 to 255 |
+	                   +----+----------+----------+
+
+	   The VER field is set to X'05' for this version of the protocol.  The
+	   NMETHODS field contains the number of method identifier octets that
+	   appear in the METHODS field.
+
+	   The server selects from one of the methods given in METHODS, and
+	   sends a METHOD selection message:
+
+	                         +----+--------+
+	                         |VER | METHOD |
+	                         +----+--------+
+	                         | 1  |   1    |
+	                         +----+--------+
+
+	   If the selected METHOD is X'FF', none of the methods listed by the
+	   client are acceptable, and the client MUST close the connection.
+
+	   The values currently defined for METHOD are:
+
+	          o  X'00' NO AUTHENTICATION REQUIRED
+	          o  X'01' GSSAPI
+	          o  X'02' USERNAME/PASSWORD
+	          o  X'03' to X'7F' IANA ASSIGNED
+	          o  X'80' to X'FE' RESERVED FOR PRIVATE METHODS
+	          o  X'FF' NO ACCEPTABLE METHODS
+
+	   The client and server then enter a method-specific sub-negotiation.
+	*/
+
+	buf := make([]byte, 2)
+	_, err := io.ReadFull(conn, buf)
+	if err != nil {
+		Log.Error(err)
+		return false
+	}
+	var nMethods = buf[1]
+	methods := make([]byte, nMethods)
+	_, err = io.ReadFull(conn, methods)
 	if err != nil {
 		Log.Error(err)
 		return false
 	}
 
-	// log.Println("Received:", buf[:n])
-
-	// var version = buf[0]
-	// var nMethods = buf[1]
-
 	// 解析协商请求
-	methods := buf[2:n]
 	var selectedMethod byte
-
-	/*
-	   o  X'00' NO AUTHENTICATION REQUIRED
-	   o  X'01' GSSAPI
-	   o  X'02' USERNAME/PASSWORD
-	   o  X'03' to X'7F' IANA ASSIGNED
-	   o  X'80' to X'FE' RESERVED FOR PRIVATE METHODS
-	   o  X'FF' NO ACCEPTABLE METHODS
-	*/
-
-	// log.Println("Version:", version)
-	// log.Println("Number of Methods:", nMethods)
-	// log.Println("Methods:", methods)
 
 	// 遍历支持的认证方式，选择合适的方式
 	for _, method := range methods {
@@ -47,9 +70,6 @@ func Negotiate(conn net.Conn) bool {
 			break
 		}
 	}
-
-	// log.Println("Selected Method:", selectedMethod)
-	// defer log.Println("============== END Negotiation ==============")
 
 	// 发送协商响应
 	response := []byte{0x05, selectedMethod}
@@ -62,7 +82,7 @@ func Negotiate(conn net.Conn) bool {
 	return true
 }
 
-func ParseRequest(request []byte) (address string, port int, err error) {
+func GetRequest(conn net.Conn) (address string, port int, err error) {
 	/*
 	   The SOCKS request is formed as follows:
 
@@ -90,34 +110,187 @@ func ParseRequest(request []byte) (address string, port int, err error) {
 	        o  DST.PORT desired destination port in network octet
 	           order
 	*/
-	if len(request) < 6 {
-		return "", 0, fmt.Errorf("request is too short: %v", request)
+	buf := make([]byte, 4)
+	_, err = io.ReadFull(conn, buf)
+	if err != nil {
+		return
 	}
 
-	// 解析目标地址
-	var targetAddress string
-	switch request[3] {
+	switch buf[3] {
 	case 0x01:
 		// IPv4
-		targetAddress = net.IP(request[4:8]).String()
+		buf1 := make([]byte, 6)
+		_, err = io.ReadFull(conn, buf1)
+		if err != nil {
+			return
+		}
+		address = net.IP(buf1[0:4]).String()
+		port = int(buf1[4])<<8 | int(buf1[5])
 	case 0x03:
 		// 域名
-		len := int(request[4])
-		targetAddress = string(request[5 : 5+len])
+		buflen := make([]byte, 1)
+		_, err = io.ReadFull(conn, buflen)
+		if err != nil {
+			return
+		}
+		len := int(buflen[0])
+		buf3 := make([]byte, len+4)
+		_, err = io.ReadFull(conn, buf3)
+		if err != nil {
+			return
+		}
+		address = string(buf3[1 : 1+len])
+		port = int(buf3[len+2])<<8 | int(buf3[len+3])
 	case 0x04:
 		// IPv6
-		targetAddress = net.IP(request[4:20]).String()
+		buf4 := make([]byte, 18)
+		_, err = io.ReadFull(conn, buf4)
+		if err != nil {
+			return
+		}
+		address = net.IP(buf4[0:16]).String()
+		port = int(buf4[16])<<8 | int(buf4[17])
 	default:
-		return "", 0, fmt.Errorf("unsupported address type: %v", request[3])
+		return "", 0, fmt.Errorf("unsupported address type: %v", buf[3])
 	}
-
-	// 解析目标端口
-	targetPort := int(request[len(request)-2])<<8 | int(request[len(request)-1])
-
-	return targetAddress, targetPort, nil
+	return
 }
 
-func SendReply(conn net.Conn, rep byte, ip net.IP, port int) error {
+func SendRequest(conn net.Conn, cmd byte, addr string, port int) error {
+	buf := make([]byte, 4)
+	buf[0] = 0x05 // Version
+	buf[1] = cmd  // CMD
+	buf[2] = 0x00 // RESERVED
+	// Address type
+	if net.ParseIP(addr) == nil {
+		buf[3] = 0x03 // domain
+	} else {
+		if net.ParseIP(addr).To4() != nil {
+			buf[3] = 0x01 // ipv4
+		} else if net.ParseIP(addr).To16() != nil {
+			buf[3] = 0x04 // ipv6
+		}
+	}
+	switch buf[3] {
+	case 0x01:
+		// IPv4
+		ip := net.ParseIP(addr).To4()
+		buf = append(buf, ip...)
+	case 0x03:
+		// domain
+		buf = append(buf, byte(len(addr)))
+		buf = append(buf, byte('"'))
+		buf = append(buf, []byte(addr)...)
+		buf = append(buf, byte('"'))
+	case 0x04:
+		// IPv6
+		ip := net.ParseIP(addr).To16()
+		buf = append(buf, ip...)
+	default:
+		return fmt.Errorf("unsupported address type: %v", buf[3])
+	}
+	buf = append(buf, byte(port>>8), byte(port&0xff))
+	_, err := conn.Write(buf)
+	if err != nil {
+		return err
+	}
+	return nil
+}
+
+func GetReply(conn net.Conn) (rep byte, addr string, port int, err error) {
+	/*
+	   The SOCKS request information is sent by the client as soon as it has
+	   established a connection to the SOCKS server, and completed the
+	   authentication negotiations.  The server evaluates the request, and
+	   returns a reply formed as follows:
+
+	       +----+-----+-------+------+----------+----------+
+	       |VER | REP |  RSV  | ATYP | BND.ADDR | BND.PORT |
+	       +----+-----+-------+------+----------+----------+
+	       | 1  |  1  | X'00' |  1   | Variable |    2     |
+	       +----+-----+-------+------+----------+----------+
+
+	       Where:
+
+	       o  VER    protocol version: X'05'
+	       o  REP    Reply field:
+	           o  X'00' succeeded
+	           o  X'01' general SOCKS server failure
+	           o  X'02' connection not allowed by ruleset
+	           o  X'03' Network unreachable
+	           o  X'04' Host unreachable
+	           o  X'05' Connection refused
+	           o  X'06' TTL expired
+	           o  X'07' Command not supported
+	           o  X'08' Address type not supported
+	           o  X'09' to X'FF' unassigned
+	       o  RSV    RESERVED
+	       o  ATYP   address type of following address
+	           o  IP V4 address: X'01'
+	           o  DOMAINNAME: X'03'
+	           o  IP V6 address: X'04'
+	       o  BND.ADDR       server bound address
+	       o  BND.PORT       server bound port in network octet order
+
+	       Fields marked RESERVED (RSV) must be set to X'00'.
+
+	       If the chosen method includes encapsulation for purposes of
+	       authentication, integrity and/or confidentiality, the replies are
+	       encapsulated in the method-dependent encapsulation.
+	*/
+	buf := make([]byte, 4)
+	_, err = io.ReadFull(conn, buf)
+	if err != nil {
+		return
+	}
+	if buf[0] != 0x05 {
+		err = fmt.Errorf("unsupported SOCKS version: %v", buf[0])
+		return
+	}
+	rep = buf[1]
+	atyp := buf[3]
+	switch atyp {
+	case 0x01:
+		// IPv4
+		buf1 := make([]byte, 6)
+		_, err = io.ReadFull(conn, buf1)
+		if err != nil {
+			return
+		}
+		addr = net.IP(buf1[0:4]).String()
+		port = int(buf1[4])<<8 | int(buf1[5])
+	case 0x03:
+		// domain
+		buflen := make([]byte, 1)
+		_, err = io.ReadFull(conn, buflen)
+		if err != nil {
+			return
+		}
+		len := int(buflen[0])
+		buf3 := make([]byte, len+4)
+		_, err = io.ReadFull(conn, buf3)
+		if err != nil {
+			return
+		}
+		addr = string(buf3[1 : 1+len])
+		port = int(buf3[len+2])<<8 | int(buf3[len+3])
+	case 0x04:
+		// IPv6
+		buf4 := make([]byte, 18)
+		_, err = io.ReadFull(conn, buf4)
+		if err != nil {
+			return
+		}
+		addr = net.IP(buf4[0:16]).String()
+		port = int(buf4[16])<<8 | int(buf4[17])
+	default:
+		err = fmt.Errorf("unsupported address type: %v", atyp)
+		return
+	}
+	return
+}
+
+func SendReply(conn net.Conn, rep byte, addr string, port int) error {
 	/*
 	   The SOCKS request information is sent by the client as soon as it has
 	   established a connection to the SOCKS server, and completed the
@@ -159,16 +332,46 @@ func SendReply(conn net.Conn, rep byte, ip net.IP, port int) error {
 	   encapsulated in the method-dependent encapsulation.
 	*/
 	// Convert IP address to 4 bytes
-	ipBytes := ip.To4()
-	if ipBytes == nil {
-		return fmt.Errorf("invalid IP address: %s", ip.String())
+	var atyp byte = 0x00
+	if net.ParseIP(addr) == nil {
+		atyp = 0x03
+	} else {
+		if net.ParseIP(addr).To4() != nil {
+			atyp = 0x01
+		} else if net.ParseIP(addr).To16() != nil {
+			atyp = 0x04
+		}
 	}
+	buf := make([]byte, 0, 4)
+	buf[0] = 0x05 // Version
+	buf[1] = rep  // Reply field
+	buf[2] = 0x00 // RESERVED
+	buf[4] = atyp // Address type
+	switch atyp {
+	case 0x01:
+		// IPv4
+		ip := net.ParseIP(addr).To4()
+		buf = append(buf, ip...)
+	case 0x03:
+		// domain
+		buf = append(buf, byte(len(addr)))
+		buf = append(buf, byte('"'))
+		buf = append(buf, []byte(addr)...)
+		buf = append(buf, byte('"'))
+	case 0x04:
+		// IPv6
+		ip := net.ParseIP(addr).To16()
+		buf = append(buf, ip...)
+	default:
+		return fmt.Errorf("unsupported address type: %v", atyp)
+	}
+	buf = append(buf, byte(port>>8), byte(port&0xff))
+	_, err := conn.Write(buf)
+	if err != nil {
+		return err
+	}
+	return nil
 
-	reply := []byte{0x05, rep, 0x00, 0x01, 0x7f, 0x00, 0x00, 0x01}
-
-	reply = append(reply, byte(port>>8), byte(port&0xff))
-	_, err := conn.Write(reply)
-	return err
 }
 
 func TryNegotiate(conn net.Conn) bool {

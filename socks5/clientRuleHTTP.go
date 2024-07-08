@@ -38,24 +38,13 @@ func handleRuleHTTPConnection(conn net.Conn, proxyAddr string) {
 	}
 
 	// GET REQUEST
-	request := make([]byte, 256)
-	n, err := conn.Read(request)
+	targetAddress, targetPort, err := GetRequest(conn)
 	if err != nil {
 		Log.Error(err)
 		return
 	}
-	// log.Println("Received Request:", request[:n])
-
-	targetAddress, targetPort, err := ParseRequest(request[:n])
-	if err != nil {
-		Log.Error(err)
-		return
-	}
-	// log.Print("Target: ", targetAddress, ":", targetPort)
-
 	// Make a fake reply
-	reply := []byte{0x05, 0x00, 0x00, 0x01, 0x7f, 0x00, 0x00, 0x01, 0x00, 0x00}
-	conn.Write(reply)
+	SendReply(conn, 0, "127.0.0.1", 0)
 
 	// Read the HTTP / TLS request
 	bufn, buf, err := readtoBuffer(conn)
@@ -89,7 +78,7 @@ func handleRuleHTTPConnection(conn net.Conn, proxyAddr string) {
 		ruleForwardByReject(conn)
 	case "PROXY":
 		Log.Info("[PROXY] ", "Target: ", targetAddress, ":", targetPort)
-		ruleForwardByProxyBuf(conn, request, n, proxyAddr, buf, bufn)
+		ruleForwardByProxyBuf(conn, targetAddress, targetPort, proxyAddr, buf, bufn)
 	case "DIRECT":
 		Log.Info("[DIRECT] ", "Target: ", targetAddress, ":", targetPort)
 		ruleForwardByDirectBuf(conn, targetAddress, targetPort, buf, bufn)
@@ -98,7 +87,7 @@ func handleRuleHTTPConnection(conn net.Conn, proxyAddr string) {
 	}
 }
 
-func ruleForwardByProxyBuf(conn net.Conn, request []byte, n int, proxyAddr string, buf []byte, bufn int) {
+func ruleForwardByProxyBuf(conn net.Conn, addr string, port int, proxyAddr string, buf []byte, bufn int) {
 	// 建立到代理服务器的连接
 	proxyConn, err := net.Dial("tcp", proxyAddr)
 	if err != nil {
@@ -114,23 +103,21 @@ func ruleForwardByProxyBuf(conn net.Conn, request []byte, n int, proxyAddr strin
 	// log.Println("Negotiated with Proxy Server SUCCESS")
 
 	// FORWARD REQUEST
-	_, err = proxyConn.Write(request[:n])
+	err = SendRequest(proxyConn, 0x01, addr, port)
 	if err != nil {
 		Log.Error(err)
 		return
 	}
 
 	// FORWARD REPLY
-	reply := make([]byte, 256)
-	_, err = proxyConn.Read(reply)
+	rep, _, _, err := GetReply(proxyConn)
 	if err != nil {
 		Log.Error(err)
 		return
 	}
 	// We should not send the reply to the client, Since we have made a fake reply
-	// conn.Write(reply[:n])
-	if reply[1] != 0x00 {
-		Log.Error("(FROM Proxy Server) Failed to connect to target server")
+	if rep != 0x00 {
+		Log.Error("(FROM PROXY) Failed to connect to ", addr, ":", port, " (", rep, ")")
 		return
 	}
 
@@ -140,9 +127,9 @@ func ruleForwardByProxyBuf(conn net.Conn, request []byte, n int, proxyAddr strin
 	io.Copy(conn, proxyConn)
 }
 
-func ruleForwardByDirectBuf(conn net.Conn, targetAddress string, targetPort int, buf []byte, bufn int) {
+func ruleForwardByDirectBuf(conn net.Conn, addr string, port int, buf []byte, bufn int) {
 	// 建立到目标服务器的连接
-	targetConn, err := net.Dial("tcp", fmt.Sprintf("%s:%d", targetAddress, targetPort))
+	targetConn, err := net.Dial("tcp", fmt.Sprintf("%s:%d", addr, port))
 	if err != nil {
 		Log.Error(err)
 		return

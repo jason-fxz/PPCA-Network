@@ -33,15 +33,8 @@ func handleServerConnection(conn net.Conn) {
 		return
 	}
 
-	request := make([]byte, 256)
-	n, err := conn.Read(request)
-	if err != nil {
-		Log.Error(err)
-		return
-	}
-
 	// 解析请求的目标地址和端口
-	targetAddress, targetPort, err := ParseRequest(request[:n])
+	targetAddress, targetPort, err := GetRequest(conn)
 	if err != nil {
 		Log.Error(err)
 		return
@@ -57,7 +50,7 @@ func handleServerConnection(conn net.Conn) {
 
 	Log.Info("Connected to Target:", targetAddress, ":", targetPort)
 
-	SendReply(conn, 0, targetConn.LocalAddr().(*net.TCPAddr).IP, targetConn.LocalAddr().(*net.TCPAddr).Port)
+	SendReply(conn, 0, targetConn.RemoteAddr().(*net.TCPAddr).IP.String(), targetConn.RemoteAddr().(*net.TCPAddr).Port)
 
 	// 数据转发
 	go io.Copy(targetConn, conn)

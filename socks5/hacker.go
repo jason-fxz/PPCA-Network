@@ -160,22 +160,14 @@ func handleTLSConnection(conn net.Conn) {
 	}
 
 	// GET REQUEST
-	request := make([]byte, 256)
-	n, err := conn.Read(request)
-	if err != nil {
-		Log.Error(err)
-		return
-	}
-
-	targetAddress, targetPort, err := ParseRequest(request[:n])
+	targetAddress, targetPort, err := GetRequest(conn)
 	if err != nil {
 		Log.Error(err)
 		return
 	}
 
 	// Make a fake reply
-	reply := []byte{0x05, 0x00, 0x00, 0x01, 0x7f, 0x00, 0x00, 0x01, 0x00, 0x00}
-	conn.Write(reply)
+	SendReply(conn, 0, "127.0.0.1", 0)
 
 	// Get host name from targetAddress
 	host := targetAddress

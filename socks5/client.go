@@ -46,32 +46,26 @@ func handleClientConnection(conn net.Conn, proxyAddr string) {
 	defer ProxyConn.Close()
 
 	// FORWARD REQUEST
-	request := make([]byte, 256)
-	n, err := conn.Read(request)
+	targetAddress, targetPort, err := GetRequest(conn)
 	if err != nil {
 		Log.Error(err)
 		return
 	}
-	_, err = ProxyConn.Write(request[:n])
+	err = SendRequest(ProxyConn, 0x01, targetAddress, targetPort)
 	if err != nil {
 		Log.Error(err)
 		return
 	}
 
 	// FORWARD REPLY
-	reply := make([]byte, 256)
-	n, err = ProxyConn.Read(reply)
+	rep, bindaddr, bindport, err := GetReply(ProxyConn)
 	if err != nil {
 		Log.Error(err)
 		return
 	}
-	conn.Write(reply[:n])
-	if reply[1] != 0x00 {
-		return
-	}
-	targetAddress, targetPort, err := ParseRequest(request[:n])
-	if err != nil {
-		Log.Error(err)
+	SendReply(conn, rep, bindaddr, bindport)
+	if rep != 0x00 {
+		Log.Error("Failed to connect to target")
 		return
 	}
 	Log.Info("Target: ", targetAddress, ":", targetPort)

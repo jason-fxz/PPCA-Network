@@ -37,14 +37,8 @@ func handleClientRuleConnection(conn net.Conn, proxyAddr string) {
 	}
 
 	// GET REQUEST
-	request := make([]byte, 256)
-	n, err := conn.Read(request)
-	if err != nil {
-		Log.Error(err)
-		return
-	}
+	targetAddress, targetPort, err := GetRequest(conn)
 
-	targetAddress, targetPort, err := ParseRequest(request[:n])
 	if err != nil {
 		Log.Error(err)
 		return
@@ -61,7 +55,7 @@ func handleClientRuleConnection(conn net.Conn, proxyAddr string) {
 		ruleForwardByReject(conn)
 	case "PROXY":
 		Log.Info("[PROXY] ", "Target: ", targetAddress, ":", targetPort)
-		ruleForwardByProxy(conn, request, n, proxyAddr)
+		ruleForwardByProxy(conn, targetAddress, targetPort, proxyAddr)
 	case "DIRECT":
 		Log.Info("[DIRECT] ", "Target: ", targetAddress, ":", targetPort)
 		ruleForwardByDirect(conn, targetAddress, targetPort)
@@ -71,10 +65,10 @@ func handleClientRuleConnection(conn net.Conn, proxyAddr string) {
 }
 
 func ruleForwardByReject(conn net.Conn) {
-	SendReply(conn, 0x02, net.IPv4(127, 0, 0, 1), 0)
+	SendReply(conn, 0x02, net.IPv4(127, 0, 0, 1).String(), 0)
 }
 
-func ruleForwardByProxy(conn net.Conn, request []byte, n int, proxyAddr string) {
+func ruleForwardByProxy(conn net.Conn, addr string, port int, proxyAddr string) {
 	// 建立到代理服务器的连接
 	ProxyConn, err := net.Dial("tcp", proxyAddr)
 	if err != nil {
@@ -88,22 +82,25 @@ func ruleForwardByProxy(conn net.Conn, request []byte, n int, proxyAddr string) 
 	defer ProxyConn.Close()
 
 	// FORWARD REQUEST
-	_, err = ProxyConn.Write(request[:n])
+	err = SendRequest(ProxyConn, 0x01, addr, port)
 	if err != nil {
 		Log.Error(err)
 		return
 	}
 
 	// FORWARD REPLY
-	reply := make([]byte, 256)
-	n, err = ProxyConn.Read(reply)
+	rep, bindaddr, bindport, err := GetReply(ProxyConn)
 	if err != nil {
 		Log.Error(err)
 		return
 	}
-	conn.Write(reply[:n])
-	if reply[1] != 0x00 {
-		Log.Error("(FROM Proxy Server) Failed to connect to target server")
+	err = SendReply(conn, rep, bindaddr, bindport)
+	if err != nil {
+		Log.Error(err)
+		return
+	}
+	if rep != 0 {
+		Log.Error("(FROM PROXY) Failed to connect to ", addr, ":", port, " (", rep, ")")
 		return
 	}
 
@@ -112,23 +109,16 @@ func ruleForwardByProxy(conn net.Conn, request []byte, n int, proxyAddr string) 
 	io.Copy(conn, ProxyConn)
 }
 
-func ruleForwardByDirect(conn net.Conn, targetAddress string, targetPort int) {
+func ruleForwardByDirect(conn net.Conn, addr string, port int) {
 	// 建立到目标服务器的连接
-	targetConn, err := net.Dial("tcp", fmt.Sprintf("%s:%d", targetAddress, targetPort))
+	targetConn, err := net.Dial("tcp", fmt.Sprintf("%s:%d", addr, port))
 	if err != nil {
 		Log.Error(err)
 		return
 	}
 	defer targetConn.Close()
 
-	reply := []byte{0x05, 0x00, 0x00, 0x01, 0x7f, 0x00, 0x00, 0x01}
-	port := targetConn.LocalAddr().(*net.TCPAddr).Port
-	reply = append(reply, byte(port>>8), byte(port&0xff))
-	_, err = conn.Write(reply)
-	if err != nil {
-		Log.Error(err)
-		return
-	}
+	SendReply(conn, 0x00, targetConn.LocalAddr().String(), targetConn.LocalAddr().(*net.TCPAddr).Port)
 
 	// 数据转发
 	go io.Copy(targetConn, conn)
