@@ -134,13 +134,13 @@ func GetRequest(conn net.Conn) (address string, port int, err error) {
 			return
 		}
 		len := int(buflen[0])
-		buf3 := make([]byte, len+4)
+		buf3 := make([]byte, len+2)
 		_, err = io.ReadFull(conn, buf3)
 		if err != nil {
 			return
 		}
-		address = string(buf3[1 : 1+len])
-		port = int(buf3[len+2])<<8 | int(buf3[len+3])
+		address = string(buf3[:len])
+		port = int(buf3[len])<<8 | int(buf3[len+1])
 	case 0x04:
 		// IPv6
 		buf4 := make([]byte, 18)
@@ -179,9 +179,7 @@ func SendRequest(conn net.Conn, cmd byte, addr string, port int) error {
 	case 0x03:
 		// domain
 		buf = append(buf, byte(len(addr)))
-		buf = append(buf, byte('"'))
 		buf = append(buf, []byte(addr)...)
-		buf = append(buf, byte('"'))
 	case 0x04:
 		// IPv6
 		ip := net.ParseIP(addr).To16()
@@ -267,13 +265,13 @@ func GetReply(conn net.Conn) (rep byte, addr string, port int, err error) {
 			return
 		}
 		len := int(buflen[0])
-		buf3 := make([]byte, len+4)
+		buf3 := make([]byte, len+2)
 		_, err = io.ReadFull(conn, buf3)
 		if err != nil {
 			return
 		}
-		addr = string(buf3[1 : 1+len])
-		port = int(buf3[len+2])<<8 | int(buf3[len+3])
+		addr = string(buf3[:len])
+		port = int(buf3[len])<<8 | int(buf3[len+1])
 	case 0x04:
 		// IPv6
 		buf4 := make([]byte, 18)
@@ -346,7 +344,7 @@ func SendReply(conn net.Conn, rep byte, addr string, port int) error {
 	buf[0] = 0x05 // Version
 	buf[1] = rep  // Reply field
 	buf[2] = 0x00 // RESERVED
-	buf[4] = atyp // Address type
+	buf[3] = atyp // Address type
 	switch atyp {
 	case 0x01:
 		// IPv4
@@ -355,9 +353,7 @@ func SendReply(conn net.Conn, rep byte, addr string, port int) error {
 	case 0x03:
 		// domain
 		buf = append(buf, byte(len(addr)))
-		buf = append(buf, byte('"'))
 		buf = append(buf, []byte(addr)...)
-		buf = append(buf, byte('"'))
 	case 0x04:
 		// IPv6
 		ip := net.ParseIP(addr).To16()
