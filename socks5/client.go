@@ -46,7 +46,7 @@ func handleClientConnection(conn net.Conn, proxyAddr string) {
 	defer ProxyConn.Close()
 
 	// FORWARD REQUEST
-	targetAddress, targetPort, err := GetRequest(conn)
+	_, targetAddress, targetPort, err := GetRequest(conn)
 	if err != nil {
 		Log.Error(err)
 		return

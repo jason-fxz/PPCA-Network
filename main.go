@@ -10,13 +10,14 @@ import (
 func handleCommand(cmd string, args []string) {
 	switch cmd {
 	case "Server":
-		if len(args) != 1 {
-			fmt.Println("Usage: Server <listen>")
+		if len(args) != 2 {
+			fmt.Println("Usage: Server <listen> <udpListen>")
 			return
 		}
 		listen := args[0]
-		socks5.RunServer(listen)
-		
+		udplisten := args[1]
+		socks5.RunServer(listen, udplisten)
+
 	case "Client":
 		if len(args) != 2 {
 			fmt.Println("Usage: Client <listen> <proxy>")
@@ -63,7 +64,6 @@ func handleCommand(cmd string, args []string) {
 		fmt.Println("Unknown command:", cmd)
 	}
 }
-
 
 func main() {
 	if len(os.Args) < 2 {

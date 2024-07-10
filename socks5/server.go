@@ -5,15 +5,22 @@ import (
 	"io"
 	"log"
 	"net"
+	"time"
 )
 
-func RunServer(serverAddr string) {
+func RunServer(serverAddr string, udpserverAddr string) {
 	listener, err := net.Listen("tcp", serverAddr)
 	if err != nil {
 		log.Fatal(err)
 	}
-	Log.Info("Start server on ", serverAddr)
+	Log.Info("Start server on ", listener.Addr())
 	defer listener.Close()
+	udpListenAddr, err := net.ResolveUDPAddr("udp", udpserverAddr)
+	if err != nil {
+		log.Fatal(err)
+	}
+
+	go runUDPRelayServer(udpListenAddr, 150*time.Second)
 
 	for {
 		conn, err := listener.Accept()
@@ -21,11 +28,11 @@ func RunServer(serverAddr string) {
 			Log.Error(err)
 			continue
 		}
-		go handleServerConnection(conn)
+		go handleServerConnection(conn, udpListenAddr)
 	}
 }
 
-func handleServerConnection(conn net.Conn) {
+func handleServerConnection(conn net.Conn, udpListenAddr *net.UDPAddr) {
 	defer conn.Close()
 
 	if !Negotiate(conn) {
@@ -34,25 +41,29 @@ func handleServerConnection(conn net.Conn) {
 	}
 
 	// 解析请求的目标地址和端口
-	targetAddress, targetPort, err := GetRequest(conn)
+	cmd, addr, port, err := GetRequest(conn)
 	if err != nil {
 		Log.Error(err)
 		return
 	}
+	if cmd == 0x01 {
+		// TCP
+		targetConn, err := net.Dial("tcp", fmt.Sprintf("%s:%d", addr, port))
+		if err != nil {
+			Log.Error(err)
+			return
+		}
+		defer targetConn.Close()
 
-	// 建立到目标服务器的连接
-	targetConn, err := net.Dial("tcp", fmt.Sprintf("%s:%d", targetAddress, targetPort))
-	if err != nil {
-		Log.Error(err)
-		return
+		Log.Info("Connected to Target:", addr, ":", port)
+
+		SendReply(conn, 0, targetConn.RemoteAddr().(*net.TCPAddr).IP.String(), targetConn.RemoteAddr().(*net.TCPAddr).Port)
+
+		// 数据转发
+		go io.Copy(targetConn, conn)
+		io.Copy(conn, targetConn)
+	} else if cmd == 0x03 {
+		// UDP
+		SendReply(conn, 0, udpListenAddr.IP.String(), udpListenAddr.Port)
 	}
-	defer targetConn.Close()
-
-	Log.Info("Connected to Target:", targetAddress, ":", targetPort)
-
-	SendReply(conn, 0, targetConn.RemoteAddr().(*net.TCPAddr).IP.String(), targetConn.RemoteAddr().(*net.TCPAddr).Port)
-
-	// 数据转发
-	go io.Copy(targetConn, conn)
-	io.Copy(conn, targetConn)
 }

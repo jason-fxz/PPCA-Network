@@ -82,7 +82,7 @@ func Negotiate(conn net.Conn) bool {
 	return true
 }
 
-func GetRequest(conn net.Conn) (address string, port int, err error) {
+func GetRequest(conn net.Conn) (cmd byte, addr string, port int, err error) {
 	/*
 	   The SOCKS request is formed as follows:
 
@@ -115,6 +115,7 @@ func GetRequest(conn net.Conn) (address string, port int, err error) {
 	if err != nil {
 		return
 	}
+	cmd = byte(buf[1])
 
 	switch buf[3] {
 	case 0x01:
@@ -124,7 +125,7 @@ func GetRequest(conn net.Conn) (address string, port int, err error) {
 		if err != nil {
 			return
 		}
-		address = net.IP(buf1[0:4]).String()
+		addr = net.IP(buf1[0:4]).String()
 		port = int(buf1[4])<<8 | int(buf1[5])
 	case 0x03:
 		// 域名
@@ -139,7 +140,7 @@ func GetRequest(conn net.Conn) (address string, port int, err error) {
 		if err != nil {
 			return
 		}
-		address = string(buf3[:len])
+		addr = string(buf3[:len])
 		port = int(buf3[len])<<8 | int(buf3[len+1])
 	case 0x04:
 		// IPv6
@@ -148,10 +149,10 @@ func GetRequest(conn net.Conn) (address string, port int, err error) {
 		if err != nil {
 			return
 		}
-		address = net.IP(buf4[0:16]).String()
+		addr = net.IP(buf4[0:16]).String()
 		port = int(buf4[16])<<8 | int(buf4[17])
 	default:
-		return "", 0, fmt.Errorf("unsupported address type: %v", buf[3])
+		return cmd, "", 0, fmt.Errorf("unsupported address type: %v", buf[3])
 	}
 	return
 }
@@ -367,7 +368,6 @@ func SendReply(conn net.Conn, rep byte, addr string, port int) error {
 		return err
 	}
 	return nil
-
 }
 
 func TryNegotiate(conn net.Conn) bool {

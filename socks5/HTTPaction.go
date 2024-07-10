@@ -54,7 +54,7 @@ func handleHTTPacitonConnection(conn net.Conn, proxyAddr string) {
 	}
 
 	// GET REQUEST
-	targetAddress, targetPort, err := GetRequest(conn)
+	_, targetAddress, targetPort, err := GetRequest(conn)
 	if err != nil {
 		Log.Error(err)
 		return
