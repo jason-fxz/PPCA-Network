@@ -340,7 +340,7 @@ func SendReply(conn net.Conn, rep byte, addr string, port int) error {
 			atyp = 0x04
 		}
 	}
-	buf := make([]byte, 0, 4)
+	buf := make([]byte, 4)
 	buf[0] = 0x05 // Version
 	buf[1] = rep  // Reply field
 	buf[2] = 0x00 // RESERVED

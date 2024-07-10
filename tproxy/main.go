@@ -23,7 +23,7 @@ func getOriginalDst(clientConn *net.TCPConn) ([]byte, error) {
 	if errno != 0 {
 		return []byte{}, errno
 	}
-	return []byte{addr.Addr[0], addr.Addr[1], addr.Addr[2], addr.Addr[3], 0, byte(addr.Port >> 8)}, nil
+	return []byte{addr.Addr[0], addr.Addr[1], addr.Addr[2], addr.Addr[3], byte(addr.Port & 0xff), byte(addr.Port >> 8)}, nil
 }
 
 func handleConnection(conn net.Conn) {
