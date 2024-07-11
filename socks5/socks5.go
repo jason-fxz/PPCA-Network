@@ -149,7 +149,7 @@ func GetRequest(conn net.Conn) (cmd byte, addr string, port int, err error) {
 		if err != nil {
 			return
 		}
-		addr = net.IP(buf4[0:16]).String()
+		addr = "[" + net.IP(buf4[0:16]).String() + "]"
 		port = int(buf4[16])<<8 | int(buf4[17])
 	default:
 		return cmd, "", 0, fmt.Errorf("unsupported address type: %v", buf[3])
@@ -280,7 +280,7 @@ func GetReply(conn net.Conn) (rep byte, addr string, port int, err error) {
 		if err != nil {
 			return
 		}
-		addr = net.IP(buf4[0:16]).String()
+		addr = "[" + net.IP(buf4[0:16]).String() + "]"
 		port = int(buf4[16])<<8 | int(buf4[17])
 	default:
 		err = fmt.Errorf("unsupported address type: %v", atyp)
