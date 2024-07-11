@@ -33,7 +33,7 @@ func RunServer(serverAddr string, udpserverAddr string) {
 }
 
 func handleServerConnection(conn net.Conn, udpListenAddr *net.UDPAddr) {
-	Log.Debug("New connection from ", conn.RemoteAddr())
+	// Log.Debug("New connection from ", conn.RemoteAddr())
 	defer conn.Close()
 
 	if !Negotiate(conn) {
@@ -57,7 +57,7 @@ func handleServerConnection(conn net.Conn, udpListenAddr *net.UDPAddr) {
 		}
 		defer targetConn.Close()
 
-		Log.Info("Connected to Target:", addr, ":", port)
+		Log.Info("[TCP] ", conn.RemoteAddr(), " -> ", addr, ":", port)
 
 		SendReply(conn, 0, targetConn.RemoteAddr().(*net.TCPAddr).IP.String(), targetConn.RemoteAddr().(*net.TCPAddr).Port)
 
@@ -66,7 +66,7 @@ func handleServerConnection(conn net.Conn, udpListenAddr *net.UDPAddr) {
 		io.Copy(conn, targetConn)
 	} else if cmd == 0x03 {
 		// UDP
-		Log.Info("UDP ASSOCIATE")
+		Log.Info("[UDP ASSOCIATE] ", conn.RemoteAddr(), )
 		SendReply(conn, 0, udpListenAddr.IP.String(), udpListenAddr.Port)
 	}
 }

@@ -32,8 +32,8 @@ func (p *UDPMap) Del(addr string) *net.UDPConn {
 }
 
 //          | UDP Relay Server |
-// client -> relayer ==> sender -> server
-// client <- relayer <== sender <- server
+// client -> relayer ==> senders -> server
+// client <- relayer <== senders <- server
 
 func runUDPRelayServer(listenAddr *net.UDPAddr, timeout time.Duration) {
 	relayer, err := net.ListenUDP("udp", listenAddr)
@@ -47,8 +47,9 @@ func runUDPRelayServer(listenAddr *net.UDPAddr, timeout time.Duration) {
 	buffer := make([]byte, 65536)
 	for {
 		n, cliAddr, err := relayer.ReadFrom(buffer)
+		Log.Debug("Get UDP ", cliAddr)
 		if err != nil {
-			Log.Error("Error reading from UDP: ", err)
+			// Log.Error("Error reading from UDP: ", err)
 			continue
 		}
 		sender := udpmap.Get(cliAddr.String())
@@ -62,7 +63,7 @@ func runUDPRelayServer(listenAddr *net.UDPAddr, timeout time.Duration) {
 			go func() {
 				err := dataBackword(sender, relayer, cliAddr, timeout)
 				if err != nil {
-					Log.Error("Error dataBackword: ", err)
+					// Log.Error("Error dataBackword: ", err)
 				}
 				sender := udpmap.Del(cliAddr.String())
 				if sender != nil {
@@ -70,9 +71,9 @@ func runUDPRelayServer(listenAddr *net.UDPAddr, timeout time.Duration) {
 				}
 			}()
 		}
-		err = dataForward(sender, buffer[:n])
+		err = dataForward(cliAddr, sender, buffer[:n])
 		if err != nil {
-			Log.Error("Error dataForward: ", err)
+			// Log.Error("Error dataForward: ", err)
 			continue
 		}
 
@@ -129,15 +130,15 @@ func dataBackword(sender *net.UDPConn, relayer *net.UDPConn, cliAddr net.Addr, t
 		}
 		buf = append(buf, byte(srvAddr.(*net.UDPAddr).Port>>8), byte(srvAddr.(*net.UDPAddr).Port&0xff))
 		buf = append(buf, buffer[:n]...)
-
 		_, err = relayer.WriteTo(buf, cliAddr)
 		if err != nil {
 			return err
 		}
+		Log.Info("[UDP] (Backword) ", srvAddr.String(), " -> ", cliAddr.String(), " ", len(buf), " bytes")
 	}
 }
 
-func dataForward(sender *net.UDPConn, buf []byte) error {
+func dataForward(cliAddr net.Addr, sender *net.UDPConn, buf []byte) error {
 	frag := buf[2]
 	if frag != 0x00 {
 		return fmt.Errorf("unsupported FRAG: %d", frag)
@@ -153,10 +154,10 @@ func dataForward(sender *net.UDPConn, buf []byte) error {
 		srvAddr = string(buf[5 : 5+int(buf[4])])
 		n = 5 + int(buf[4])
 	case 0x04:
-		srvAddr = net.IP(buf[4:20]).String()
+		srvAddr = "[" + net.IP(buf[4:20]).String() + "]"
 		n = 20
 	default:
-		return fmt.Errorf("Unsupported ATYP: %d", atyp)
+		return fmt.Errorf("unsupported ATYP: %d", atyp)
 	}
 	srvAddr = fmt.Sprintf("%s:%d", srvAddr, int(buf[n])<<8|int(buf[n+1]))
 	buf = buf[n+2:]
@@ -165,5 +166,9 @@ func dataForward(sender *net.UDPConn, buf []byte) error {
 		return err
 	}
 	_, err = sender.WriteTo(buf, srvudpAddr)
-	return err
+	if err != nil {
+		return err;
+	}
+	Log.Info("[UDP] (Forword) ", cliAddr.String(), " -> ", srvudpAddr.String(), " ", len(buf), " bytes")
+	return nil
 }
