@@ -1,4 +1,10 @@
+//go:build !windows
+
 package socks5
+
+// This code will cause the file to not compile on Windows
+// as it uses the "golang.org/x/sys/unix" package which is not available on Windows.
+// You can add a build constraint to exclude this code from Windows builds.
 
 import (
 	"io"

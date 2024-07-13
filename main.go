@@ -69,7 +69,7 @@ func main() {
 	if len(os.Args) < 2 {
 		fmt.Println("Usage: <command> [arguments...]")
 		fmt.Println("Commands:")
-		fmt.Println("  Server <listen>")
+		fmt.Println("  Server <listen> <udpListen>")
 		fmt.Println("  Client <listen> <proxy>")
 		fmt.Println("  Rule <listen> <proxy> <rulesfile>")
 		fmt.Println("  RuleHTTP <listen> <proxy> <rulesfile>")

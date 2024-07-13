@@ -49,7 +49,7 @@ func handleServerConnection(conn net.Conn, udpListenAddr *net.UDPAddr) {
 	}
 	if cmd == 0x01 {
 		// TCP
-		
+
 		targetConn, err := net.Dial("tcp", fmt.Sprintf("%s:%d", addr, port))
 		if err != nil {
 			Log.Error(err)
@@ -66,7 +66,7 @@ func handleServerConnection(conn net.Conn, udpListenAddr *net.UDPAddr) {
 		io.Copy(conn, targetConn)
 	} else if cmd == 0x03 {
 		// UDP
-		Log.Info("[UDP ASSOCIATE] ", conn.RemoteAddr(), )
+		Log.Info("[UDP ASSOCIATE] ", conn.RemoteAddr())
 		SendReply(conn, 0, udpListenAddr.IP.String(), udpListenAddr.Port)
 	}
 }
