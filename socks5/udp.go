@@ -8,7 +8,9 @@ import (
 )
 
 type UDPMap struct {
-	sync.Map // addr(to Client) <-> *Socks5UDPConn (to Target)
+	sync.Map                 // addr(to Client) <-> *Socks5UDPConn (to Target)
+	whitelist     sync.Map   // Client ip <-> []*Socks5UDPConn
+	whiteListLock sync.Mutex // lock for whitelist
 }
 
 type Socks5UDPConn struct {
@@ -56,6 +58,32 @@ func (p *UDPMap) Del(addr string) *Socks5UDPConn {
 	return value.(*Socks5UDPConn)
 }
 
+func (p *UDPMap) AddWhitelist(ip string, conn *Socks5UDPConn) {
+	p.whiteListLock.Lock()
+	defer p.whiteListLock.Unlock()
+	cur, ok := p.whitelist.Load(ip)
+	if !ok {
+		p.whitelist.Store(ip, []*Socks5UDPConn{conn})
+	} else {
+		p.whitelist.Store(ip, append(cur.([]*Socks5UDPConn), conn))
+	}
+}
+
+func (p *UDPMap) CheckWhitelist(ip string) *Socks5UDPConn {
+	p.whiteListLock.Lock()
+	defer p.whiteListLock.Unlock()
+	cur, ok := p.whitelist.Load(ip)
+	if !ok {
+		return nil
+	}
+	if len(cur.([]*Socks5UDPConn)) == 0 {
+		return nil
+	}
+	conn := cur.([]*Socks5UDPConn)[0]
+	p.whitelist.Store(ip, cur.([]*Socks5UDPConn)[1:])
+	return conn
+}
+
 //          | UDP Relay Server |
 // client -> relayer ==> senders -> server
 // client <- relayer <== senders <- server
@@ -67,8 +95,9 @@ func runUDPRelayServer(listenAddr *net.UDPAddr, timeout time.Duration, udpmap *U
 		return
 	}
 	defer relayer.Close()
+	listenAddr.Port = relayer.LocalAddr().(*net.UDPAddr).Port
 	Log.Info("Start UDP relay server on ", relayer.LocalAddr())
-	CheckUDPTimeout(udpmap, timeout*2)
+	go CheckUDPTimeout(udpmap, timeout*2)
 	// var udpmap UDPMap
 	buffer := make([]byte, 65536)
 	for {
@@ -78,6 +107,16 @@ func runUDPRelayServer(listenAddr *net.UDPAddr, timeout time.Duration, udpmap *U
 			continue
 		}
 		udpConn := udpmap.Get(cliAddr.String())
+		if udpConn == nil {
+			Log.Debug(cliAddr.String(), " not in UDPMap")
+			udpConn = udpmap.CheckWhitelist(cliAddr.(*net.UDPAddr).IP.String())
+			if udpConn == nil {
+				Log.Debug(cliAddr.(*net.UDPAddr).IP.String(), " Not in whitelist")
+				continue
+			}
+			udpmap.Set(cliAddr.String(), udpConn)
+			Log.Debug("Found in whitelist, Set ", cliAddr.String(), " to Map")
+		}
 		if udpConn.sender == nil {
 			udpConn.sender, err = net.ListenUDP("udp", nil)
 			if err != nil {

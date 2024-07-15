@@ -84,7 +84,6 @@ func (s *Server) handleServerConnection(conn net.Conn, udpListenAddr *net.UDPAdd
 	}
 	if cmd == 0x01 {
 		// TCP
-		defer conn.Close()
 		targetConn, err := net.Dial("tcp", fmt.Sprintf("%s:%d", addr, port))
 		if err != nil {
 			Log.Error(err)
@@ -99,6 +98,7 @@ func (s *Server) handleServerConnection(conn net.Conn, udpListenAddr *net.UDPAdd
 		// 数据转发
 		go io.Copy(targetConn, conn)
 		io.Copy(conn, targetConn)
+		conn.Close()
 	} else if cmd == 0x03 {
 		// UDP
 		Log.Info("[UDP ASSOCIATE] ", conn.RemoteAddr())
@@ -108,11 +108,18 @@ func (s *Server) handleServerConnection(conn net.Conn, udpListenAddr *net.UDPAdd
 			Log.Error(err)
 			return
 		}
-		s.udpmap.Set(fmt.Sprintf("%s:%d", addr, port), udpconn)
+		// CASE1 : refer to RFC, use the addr/port client send to you
+		// This will NOT work !! Since many socks5 client send you destination addr/port
+		// s.udpmap.Set(fmt.Sprintf("%s:%d", addr, port), udpconn)
+
+		// CASE2: we bind it to the first request in the same source ip
+		s.udpmap.AddWhitelist(conn.RemoteAddr().(*net.TCPAddr).IP.String(), udpconn)
+
 		err = SendReply(conn, 0, conn.LocalAddr().(*net.TCPAddr).IP.String(), udpListenAddr.Port)
 		if err != nil {
 			conn.Close()
 			Log.Error(err)
+			return
 		}
 	}
 }
