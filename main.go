@@ -78,7 +78,7 @@ func main() {
 		fmt.Println("  Hacker <listen>")
 		return
 	}
-
+	socks5.Log.SetLogLevel(5)
 	cmd := os.Args[1]
 	args := os.Args[2:]
 	handleCommand(cmd, args)
