@@ -8,19 +8,46 @@ import (
 	"time"
 )
 
-func RunServer(serverAddr string, udpserverAddr string) {
-	listener, err := net.Listen("tcp", serverAddr)
+type Server struct {
+	listenAddr    *net.TCPAddr
+	udpListenAddr *net.UDPAddr
+	timeout       time.Duration
+	udpmap        *UDPMap
+}
+
+func NewServer(listenAddr string, udpListenAddr string, timeout time.Duration) (*Server, error) {
+	tcp, err := net.ResolveTCPAddr("tcp", listenAddr)
+	if err != nil {
+		return nil, err
+	}
+	udp := &net.UDPAddr{}
+	if udpListenAddr != "" {
+		udp, err = net.ResolveUDPAddr("udp", udpListenAddr)
+		if err != nil {
+			return nil, err
+		}
+	}
+
+	return &Server{
+		listenAddr:    tcp,
+		udpListenAddr: udp,
+		timeout:       timeout,
+		udpmap:        &UDPMap{},
+	}, nil
+}
+
+func (s *Server) Run() {
+	listener, err := net.ListenTCP("tcp", s.listenAddr)
 	if err != nil {
 		log.Fatal(err)
 	}
 	Log.Info("Start server on ", listener.Addr())
 	defer listener.Close()
-	udpListenAddr, err := net.ResolveUDPAddr("udp", udpserverAddr)
 	if err != nil {
 		log.Fatal(err)
 	}
 
-	go runUDPRelayServer(udpListenAddr, 150*time.Second)
+	go runUDPRelayServer(s.udpListenAddr, 30*time.Second, s.udpmap)
 
 	for {
 		conn, err := listener.Accept()
@@ -28,13 +55,21 @@ func RunServer(serverAddr string, udpserverAddr string) {
 			Log.Error(err)
 			continue
 		}
-		go handleServerConnection(conn, udpListenAddr)
+		go s.handleServerConnection(conn, s.udpListenAddr)
 	}
 }
 
-func handleServerConnection(conn net.Conn, udpListenAddr *net.UDPAddr) {
+func RunServer(listenAddr string, udpListenAddr string) {
+	server, err := NewServer(listenAddr, udpListenAddr, 30*time.Second)
+	if err != nil {
+		Log.Fatal(err)
+	}
+	server.Run()
+
+}
+
+func (s *Server) handleServerConnection(conn net.Conn, udpListenAddr *net.UDPAddr) {
 	// Log.Debug("New connection from ", conn.RemoteAddr())
-	defer conn.Close()
 
 	if !Negotiate(conn) {
 		Log.Error("Failed to negotiate with client")
@@ -49,7 +84,7 @@ func handleServerConnection(conn net.Conn, udpListenAddr *net.UDPAddr) {
 	}
 	if cmd == 0x01 {
 		// TCP
-
+		defer conn.Close()
 		targetConn, err := net.Dial("tcp", fmt.Sprintf("%s:%d", addr, port))
 		if err != nil {
 			Log.Error(err)
@@ -67,6 +102,17 @@ func handleServerConnection(conn net.Conn, udpListenAddr *net.UDPAddr) {
 	} else if cmd == 0x03 {
 		// UDP
 		Log.Info("[UDP ASSOCIATE] ", conn.RemoteAddr())
-		SendReply(conn, 0, udpListenAddr.IP.String(), udpListenAddr.Port)
+		udpconn, err := NewSocks5UDPConn(s.timeout, conn.(*net.TCPConn))
+		if err != nil {
+			conn.Close()
+			Log.Error(err)
+			return
+		}
+		s.udpmap.Set(fmt.Sprintf("%s:%d", addr, port), udpconn)
+		err = SendReply(conn, 0, conn.LocalAddr().(*net.TCPAddr).IP.String(), udpListenAddr.Port)
+		if err != nil {
+			conn.Close()
+			Log.Error(err)
+		}
 	}
 }
